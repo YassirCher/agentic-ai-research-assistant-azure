@@ -1,0 +1,43 @@
+# Local notes and non-release documents
+api key.txt
+audit.md
+recap.md
+recommendation.md
+recommendations.md
+technique.md
+interpretation.md
+azure.md
+cicd.md
+
+# Environment files (secrets)
+.env
+backend/.env
+
+# Python cache and artifacts
+__pycache__/
+*.py[cod]
+*.pyo
+*.pyd
+.pytest_cache/
+.mypy_cache/
+
+# Virtual environments
+.venv/
+venv/
+env/
+
+# OS/editor noise
+.DS_Store
+Thumbs.db
+.vscode/
+.idea/
+
+# Node artifacts
+node_modules/
+frontend/node_modules/
+
+# Runtime data and local volumes
+backend/chroma_data/
+backend/db_data/
+data/chroma/
+tmp/

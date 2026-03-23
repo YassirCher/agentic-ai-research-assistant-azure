@@ -1,0 +1,41 @@
+services:
+  backend:
+    build:
+      context: ./backend
+      dockerfile: Dockerfile
+    container_name: airesearchassistant-backend
+    ports:
+      - "8000:8000"
+    volumes:
+      - sqlite_data:/app/db_data
+      - chroma_data:/app/data/chroma
+      - chroma_cache:/app/chroma_data
+    env_file:
+      - ./backend/.env
+    environment:
+      - CHROMA_PERSIST_DIR=/app/data/chroma
+      - ENV=prod
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - driver: nvidia
+              count: all
+              capabilities: [gpu]
+    restart: always
+
+  frontend:
+    build:
+      context: ./frontend
+      dockerfile: Dockerfile
+    container_name: airesearchassistant-frontend
+    ports:
+      - "80:80"
+    depends_on:
+      - backend
+    restart: always
+
+volumes:
+  sqlite_data:
+  chroma_data:
+  chroma_cache:
