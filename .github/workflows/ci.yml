@@ -1,4 +1,4 @@
-name: CI
+name: CI/CD Pipeline
 
 on:
   push:
@@ -6,9 +6,9 @@ on:
       - main
 
 jobs:
+  # 1. ÉTAPE DE TEST (Ton code d'origine, légèrement nettoyé)
   test-and-build:
     runs-on: ubuntu-latest
-
     steps:
       - name: Checkout
         uses: actions/checkout@v4
@@ -36,11 +36,61 @@ jobs:
           CHROMA_PERSIST_DIR: ./data/chroma-ci
         run: pytest -q
 
-      - name: Set up Docker Buildx
-        uses: docker/setup-buildx-action@v3
+  # 2. ÉTAPE DE DÉPLOIEMENT AZURE (La magie du Cloud)
+  deploy-to-azure:
+    needs: test-and-build # Attends que les tests soient verts
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
 
-      - name: Build backend image
-        run: docker build -t airesearchassistant-backend:ci ./backend
+      - name: Connexion à Azure
+        uses: azure/login@v2
+        with:
+          creds: ${{ secrets.AZURE_CREDENTIALS }}
 
-      - name: Build frontend image
-        run: docker build -t airesearchassistant-frontend:ci ./frontend
+      - name: Connexion au registre Docker (ACR)
+        uses: azure/docker-login@v1
+        with:
+          login-server: ${{ secrets.ACR_LOGIN_SERVER }}
+          username: ${{ secrets.ACR_USERNAME }}
+          password: ${{ secrets.ACR_PASSWORD }}
+
+      - name: Build et Push de l'image Backend
+        run: |
+          docker build -t ${{ secrets.ACR_LOGIN_SERVER }}/backend:${{ github.sha }} ./backend
+          docker push ${{ secrets.ACR_LOGIN_SERVER }}/backend:${{ github.sha }}
+
+      - name: Build et Push de l'image Frontend
+        run: |
+          docker build -t ${{ secrets.ACR_LOGIN_SERVER }}/frontend:${{ github.sha }} ./frontend
+          docker push ${{ secrets.ACR_LOGIN_SERVER }}/frontend:${{ github.sha }}
+
+      - name: Déploiement Backend sur Azure Container Apps
+        uses: azure/cli@v2
+        with:
+          azcliversion: latest
+          inlineScript: |
+            az config set extension.use_dynamic_install=yes_without_prompt
+            az containerapp up \
+              --name ca-multi-ag-backend \
+              --resource-group rg-multi-ag-ai-rag-es \
+              --environment cae-multi-ag-env \
+              --image ${{ secrets.ACR_LOGIN_SERVER }}/backend:${{ github.sha }} \
+              --target-port 8000 \
+              --ingress external \
+              --env-vars GROQ_API_KEY=${{ secrets.GROQ_API_KEY }}
+
+      - name: Déploiement Frontend sur Azure Container Apps
+        uses: azure/cli@v2
+        with:
+          azcliversion: latest
+          inlineScript: |
+            az config set extension.use_dynamic_install=yes_without_prompt
+            az containerapp up \
+              --name ca-multi-ag-frontend \
+              --resource-group rg-multi-ag-ai-rag-es \
+              --environment cae-multi-ag-env \
+              --image ${{ secrets.ACR_LOGIN_SERVER }}/frontend:${{ github.sha }} \
+              --target-port 80 \
+              --ingress external
