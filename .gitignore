@@ -8,6 +8,8 @@ technique.md
 interpretation.md
 azure.md
 cicd.md
+cahier_charges.md
+*.pdf
 
 # Environment files (secrets)
 .env
