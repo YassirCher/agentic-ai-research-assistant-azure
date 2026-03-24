@@ -28,6 +28,12 @@ jobs:
         working-directory: ./backend
         env:
           PYTHONPATH: .
+          ENV: test
+          GROQ_API_KEY: test-key
+          OPENAI_API_KEY: test-key
+          LANGCHAIN_TRACING_V2: "false"
+          LANGSMITH_TRACING: "false"
+          CHROMA_PERSIST_DIR: ./data/chroma-ci
         run: pytest -q
 
       - name: Set up Docker Buildx

@@ -9,6 +9,8 @@ interpretation.md
 azure.md
 cicd.md
 cahier_charges.md
+run.txt
+roadmap.txt
 *.pdf
 
 # Environment files (secrets)
