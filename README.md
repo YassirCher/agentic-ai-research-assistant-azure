@@ -1,72 +1,165 @@
-# Agentic AI Research Assistant
+# Agentic AI Research Assistant on Azure
 
-A production-oriented, multi-agent research assistant for document-grounded Q&A.
+Production-grade, multi-agent RAG platform for document-grounded question answering with traceable reasoning, citation-aware responses, and cloud-native container operations.
 
-The platform combines retrieval-augmented generation (RAG), async document ingestion, and an explainable multi-agent workflow to deliver accurate answers with citations.
+## Frameworks & Tech Stack
 
-## Overview
+| Layer | Frameworks / Technologies |
+|---|---|
+| LLM + Agentic Orchestration | LangGraph, LangChain, LangChain Community, LangChain HuggingFace, LangChain Groq, Groq LLM API |
+| Retrieval + Embeddings | ChromaDB, sentence-transformers (all-MiniLM-L6-v2), PyTorch, Transformers |
+| Backend API | FastAPI, Uvicorn, Pydantic, Pydantic Settings, SQLModel, Python Multipart, Tenacity |
+| Document Processing | PyMuPDF |
+| Data Layer | SQLite, Chroma persistent collections |
+| Frontend | React.js, React Router, Vite, Lucide React |
+| Edge / Reverse Proxy | Nginx |
+| Containers | Docker, Docker Compose, Docker Buildx |
+| CI/CD | GitHub Actions, pytest, HTTPX |
+| Azure Deployment | Azure Container Registry (ACR), Azure Container Apps (ACA), Azure Resource Group, Azure CLI, Azure IAM credentials (AZURE_CREDENTIALS) |
 
-This project is designed as a SaaS-style application with:
-- Isolated chat sessions and per-chat vector collections
-- Multi-file PDF ingestion with background indexing
-- Citation-aware answer generation
-- Traceable agent steps (Router, Retriever, Ranker, Generator, Critic)
-- Dockerized deployment and CI pipeline support
+## Multi-Agent Architecture (RAG Flow)
 
-## Tech Stack
+```mermaid
+flowchart TD
+		U[User Query] --> API[FastAPI Query Endpoint]
+		API --> G[LangGraph StateGraph]
 
-- Backend: FastAPI, LangGraph, LangChain, SQLModel (SQLite)
-- Frontend: React (Vite), React Router, Nginx (containerized serving)
-- Embeddings: PyTorch + sentence-transformers (`all-MiniLM-L6-v2`)
-- Vector Store: ChromaDB
-- LLM Provider: Groq
-- DevOps: Docker Compose, GitHub Actions
+		G --> R1[Router Agent]
+		R1 -->|needs_rag = true| RET[Retriever Agent]
+		R1 -->|needs_rag = false| GEN[Generator Agent]
 
-## Core Features
+		RET --> RANK[Ranker Agent]
+		RANK --> GEN
 
-- Multi-agent RAG orchestration with observable traces
-- Asynchronous upload pipeline (`202 Processing`) with status polling
-- Chunk filtering and batched vector insertion for better runtime stability
-- Session-level data isolation (`chat_id`) for both SQL history and vector data
-- Premium UI workflow (chat navigation, upload progress, deletion modal)
+		GEN --> CRIT[Critic Agent]
+		CRIT -->|valid = true| OUT[Answer + Citations + Trace]
+		CRIT -->|valid = false and loop_count < 2| GEN
+		CRIT -->|loop_count >= 2| OUT
 
-## Run Locally with Docker
+		subgraph Shared Tooling
+			VS[(ChromaDB Vector Store)]
+			EMB[Sentence-Transformers Embeddings]
+			SQL[(SQLModel + SQLite Chat History)]
+			PDF[Async PDF Parsing + Chunking]
+			BUD[Token Budget + Rate Limits]
+		end
 
-Prerequisites:
-- Docker Desktop (or Docker Engine + Compose plugin)
+		RET <--> VS
+		RET <--> EMB
+		API <--> SQL
+		API <--> PDF
+		G <--> BUD
+```
 
-From the project root:
+---
+
+## Phase 1: Dockerization & Registry (ACR)
+
+### 🎯 Objective
+Ship a heavy backend image (embedding stack + ML dependencies) reliably and promote immutable artifacts to Azure Container Registry.
+
+### Key Decisions
+- Backend image built around Python 3.11 slim with optimized dependency layering.
+- Frontend image uses multi-stage build (Node build stage -> Nginx runtime stage).
+- Registry-first strategy ensures deployment consistency and rollback safety.
+
+### Deliverables
+- Containerized backend and frontend services.
+- Image tagging strategy ready for CI/CD promotion.
+- ACR-compatible push model for Azure runtime updates.
+
+---
+
+## Phase 2: CI/CD Automation (GitHub Actions)
+
+### ⚙️ Objective
+Enforce quality gates and build integrity on every push to main before cloud rollout.
+
+### Workflow Logic
+1. Checkout source.
+2. Set up Python 3.11.
+3. Install backend dependencies.
+4. Run backend test suite (pytest).
+5. Build backend container image.
+6. Build frontend container image.
+
+### Outcome
+- Deterministic validation pipeline.
+- Early regression detection for code and container definitions.
+- Secure path to Azure deployment extension.
+
+---
+
+## Phase 3: Azure Infrastructure
+
+### ☁️ Objective
+Provision and operate a clean Azure landing zone for containerized multi-agent inference workloads.
+
+### Provisioned Scope
+- Dedicated Resource Group.
+- Azure Container Registry for image storage.
+- Azure Container Apps environment for managed runtime execution.
+
+### Image: Global Resource Group View
+![Global Resource Group view](screenshots/azure-resource-list-overview.png)
+
+[🔍 View Technical Details in Documentation](documentation.md#phase-3-azure-infrastructure)
+
+---
+
+## Phase 4: Networking & Nginx Reverse Proxy
+
+### 🌐 Objective
+Stabilize API routing and HTTPS behavior between frontend ingress and backend services.
+
+### Critical Focus
+- SPA routing fallback in Nginx.
+- Reverse-proxy normalization for /api requests.
+- SSL/TLS alignment for Azure-hosted ingress scenarios.
+
+### Image: Frontend Dashboard (Start/Stop)
+![Frontend Dashboard (Start/Stop)](screenshots/azure-containerapp-frontend-dashboard.png)
+
+[🔍 View Technical Details in Documentation](documentation.md#phase-4-networking--nginx-reverse-proxy)
+
+### Image: Revisions & Scaling Mode
+![Revisions & Scaling mode](screenshots/azure-containerapp-revisions.png)
+
+[🔍 View Technical Details in Documentation](documentation.md#scaling-operations)
+
+---
+
+## Phase 5: Cost Control & Hibernation (Scale to 0)
+
+### 💸 Objective
+Minimize cloud spend for Azure Students subscriptions using explicit hibernation and on-demand wake-up.
+
+### Strategy
+- Scale frontend/backend to zero replicas when idle.
+- Resume only for active demos or validations.
+- Keep container revisions and configuration intact across sleeps.
+
+### Image: Zero-Replica Status Confirmation
+![Zero-replica status confirmation](screenshots/azure-containerapp-details.png)
+
+[🔍 View Technical Details in Documentation](documentation.md#phase-5-cost-control--hibernation)
+
+---
+
+## Quick Start (Local)
 
 ```bash
 docker compose up --build -d
 ```
 
-Endpoints:
-- Application: http://localhost
+Application endpoints:
+- Frontend: http://localhost
 - Backend API: http://localhost:8000
-- API Docs: http://localhost:8000/docs
+- OpenAPI docs: http://localhost:8000/docs
 
-Stop the stack:
-
-```bash
-docker compose down
-```
-
-## Backend Test Command
+Run tests:
 
 ```bash
 cd backend
 pytest -q
 ```
-
-## Repository Structure (High Level)
-
-- `backend/`: FastAPI app, multi-agent graph, vector pipeline, tests
-- `frontend/`: React app and containerized Nginx serving configuration
-- `docker-compose.yml`: Local orchestration for backend/frontend and persistent volumes
-- `.github/workflows/ci.yml`: CI workflow (tests + Docker build checks)
-
-## Notes
-
-- Runtime data persistence is handled via Docker volumes for SQLite and ChromaDB.
-- The project is optimized for local Docker execution and cloud-container migration paths.
