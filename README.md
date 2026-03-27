@@ -5,47 +5,19 @@ Production-grade, multi-agent RAG platform for PDF-grounded research Q and A wit
 ## Tech Stack & Skills
 
 ### Languages and Runtime
-- Python 3.11
-- JavaScript (ES Modules)
-- SQL (SQLite)
-- YAML
+![Python](https://img.shields.io/badge/Python-3.11-3776AB?style=for-the-badge&logo=python&logoColor=white) ![JavaScript](https://img.shields.io/badge/JavaScript-ES202x-F7DF1E?style=for-the-badge&logo=javascript&logoColor=black) ![SQLite](https://img.shields.io/badge/SQLite-003B57?style=for-the-badge&logo=sqlite&logoColor=white) ![YAML](https://img.shields.io/badge/YAML-CB171E?style=for-the-badge&logo=yaml&logoColor=white)
 
 ### AI, LLM, and RAG Frameworks
-- LangGraph
-- LangChain
-- langchain-community
-- langchain-groq
-- langchain-huggingface
-- Groq API via ChatGroq
-- sentence-transformers (all-MiniLM-L6-v2)
-- Transformers
-- PyTorch
-- ChromaDB
+![LangGraph](https://img.shields.io/badge/LangGraph-Graph%20Orchestration-1C3A5F?style=for-the-badge) ![LangChain](https://img.shields.io/badge/LangChain-1C3C3C?style=for-the-badge&logo=langchain&logoColor=white) ![Groq](https://img.shields.io/badge/Groq%20API-F55036?style=for-the-badge&logo=groq&logoColor=white) ![HuggingFace](https://img.shields.io/badge/HuggingFace-FFCC4D?style=for-the-badge&logo=huggingface&logoColor=black) ![PyTorch](https://img.shields.io/badge/PyTorch-EE4C2C?style=for-the-badge&logo=pytorch&logoColor=white) ![ChromaDB](https://img.shields.io/badge/ChromaDB-6E56CF?style=for-the-badge)
 
 ### Backend and API
-- FastAPI
-- Uvicorn
-- Pydantic + pydantic-settings
-- SQLModel
-- python-multipart
-- Tenacity
+![FastAPI](https://img.shields.io/badge/FastAPI-009688?style=for-the-badge&logo=fastapi&logoColor=white) ![Uvicorn](https://img.shields.io/badge/Uvicorn-Server-4051B5?style=for-the-badge) ![Pydantic](https://img.shields.io/badge/Pydantic-E92063?style=for-the-badge&logo=pydantic&logoColor=white) ![SQLModel](https://img.shields.io/badge/SQLModel-ORM-0F172A?style=for-the-badge)
 
 ### Frontend
-- React 18
-- React Router
-- Vite
-- Lucide React
+![React](https://img.shields.io/badge/React-18-20232A?style=for-the-badge&logo=react&logoColor=61DAFB) ![React Router](https://img.shields.io/badge/React%20Router-CA4245?style=for-the-badge&logo=reactrouter&logoColor=white) ![Vite](https://img.shields.io/badge/Vite-646CFF?style=for-the-badge&logo=vite&logoColor=white) ![CSS3](https://img.shields.io/badge/CSS3-1572B6?style=for-the-badge&logo=css3&logoColor=white)
 
 ### Infrastructure, DevOps, and Cloud
-- Docker
-- Docker Compose
-- Nginx (SPA + reverse proxy)
-- GitHub Actions
-- pytest + HTTPX
-- Azure Container Registry (ACR)
-- Azure Container Apps (ACA)
-- Azure CLI
-- Azure login and docker login GitHub actions
+![Docker](https://img.shields.io/badge/Docker-2496ED?style=for-the-badge&logo=docker&logoColor=white) ![Nginx](https://img.shields.io/badge/Nginx-009639?style=for-the-badge&logo=nginx&logoColor=white) ![GitHub Actions](https://img.shields.io/badge/GitHub%20Actions-2088FF?style=for-the-badge&logo=githubactions&logoColor=white) ![Pytest](https://img.shields.io/badge/Pytest-0A9EDC?style=for-the-badge&logo=pytest&logoColor=white) ![Microsoft Azure](https://img.shields.io/badge/Azure-0078D4?style=for-the-badge&logo=microsoftazure&logoColor=white)
 
 ---
 
