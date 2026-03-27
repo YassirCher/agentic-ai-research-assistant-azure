@@ -1,33 +1,32 @@
 # Technical Documentation: Multi-Agent RAG on Azure
 
-This document provides implementation-level details for architecture, CI/CD, networking, and runtime operations.
+This document explains the real implementation details of this repository: agent orchestration, retrieval pipeline, Docker and deployment strategy, Nginx networking behavior, and Azure cost-control operations.
 
-## System Summary
+## Multi-Agent Architecture
 
-| Domain | Implementation |
-|---|---|
-| Agent Framework | LangGraph over a typed shared state |
-| Retrieval | ChromaDB + sentence-transformers embeddings |
-| API | FastAPI (session-aware upload/query/chat endpoints) |
-| Persistence | SQLModel + SQLite for chats/messages, Chroma persistent collections for vectors |
-| Frontend Delivery | React build served by Nginx |
-| Runtime | Docker containers on Azure Container Apps |
-| Registry | Azure Container Registry |
-| CI | GitHub Actions test and image build validation |
+The backend uses a compiled LangGraph state machine with five nodes:
+- Router
+- Retriever
+- Ranker
+- Generator
+- Critic
 
-## Agent Orchestration
+Execution graph behavior:
+1. Router classifies each question to vectorstore or direct_chat.
+2. If vectorstore, Retriever queries the chat-scoped Chroma collection.
+3. Ranker filters retrieved chunks with a relevance grader and caps context.
+4. Generator writes the final answer using grounded context and citation rules.
+5. Critic validates grounding and may force a retry loop.
+6. Loop exits on valid output or after 2 iterations.
 
-The orchestration graph is stateful and deterministic:
+The graph is implemented in backend/app/agents/graph.py with conditional edges:
+- router -> retriever or generator
+- retriever -> ranker -> generator -> critic
+- critic -> end or generator
 
-1. Router decides if RAG retrieval is required.
-2. Retriever fetches candidate chunks from the chat-isolated collection.
-3. Ranker reorders chunks for relevance.
-4. Generator produces the answer with grounding context.
-5. Critic validates quality and may trigger controlled regeneration.
+### Shared State Contract
 
-### State Contract
-
-Core state fields include:
+The state typed dictionary includes:
 - question
 - chat_id
 - documents
@@ -38,180 +37,254 @@ Core state fields include:
 - agent_steps
 - total_tokens
 
-Reducers accumulate execution trace and token usage across nodes, enabling transparent auditability and cost visibility.
+Reducers accumulate agent_steps and total_tokens automatically.
 
-### Retrieval Integrity
+### Agent-Level Behavior and Tools
 
-- Collection isolation is keyed by chat_id.
-- Upload indexing is asynchronous to keep UX responsive.
-- Batched insertion reduces embedding spikes and improves stability under constrained tiers.
+| Agent | Purpose | Primary tools and model usage |
+|---|---|---|
+| Router | Intent routing (RAG vs direct) | ChatPromptTemplate + get_fast_llm() + structured output RouteQuery |
+| Retriever | Semantic retrieval | VectorStoreManager.search_documents(query, chat_id) -> Chroma similarity_search |
+| Ranker | Relevance filtering | get_fast_llm() + structured output GradeDocuments; keeps up to 3 chunks |
+| Generator | Final grounded response | get_smart_llm() with fallback to get_fast_llm(); token-budget packing via pack_documents_by_budget |
+| Critic | Anti-hallucination gate | get_fast_llm() + structured output GradeHallucinations; validates generation against facts |
 
-## Mermaid: Agent + Tool Topology
+### RAG Pipeline Specifics
+
+Upload pipeline details:
+- /api/upload accepts multiple PDF files.
+- A chat_id is created first and persisted in SQLite.
+- Files are queued with per-file status in upload_job_store.
+- Background task parses PDFs via PyMuPDF and indexes batches into Chroma.
+- /api/uploads/{chat_id}/status supports polling until ready or failed.
+
+Query pipeline details:
+- /api/query returns final answer + trace metadata.
+- /api/query/stream emits SSE events per node:
+	- start
+	- agent_step
+	- done
+	- error
+- User and AI messages are persisted in SQLModel tables.
+
+Grounding and budget controls:
+- Retrieval top-k default comes from settings.TOP_K_RETRIEVAL.
+- Noise chunks are dropped using lexical and alpha-ratio heuristics.
+- Generator enforces total budget, safety margin, and context packing.
+- Model fallback is automatic on generation failures.
+
+### Mermaid: Code-Accurate Flow
 
 ```mermaid
-flowchart LR
-		Q[Query API] --> RT[Router]
-		RT -->|RAG Path| RV[Retriever]
-		RV --> RK[Ranker]
-		RK --> GN[Generator]
-		RT -->|Direct Path| GN
-		GN --> CR[Critic]
-		CR -->|Approve| RESP[Response]
-		CR -->|Retry <= 2| GN
+flowchart TD
+		U[User] --> API[/FastAPI /api/query or /api/query/stream/]
+		API --> RL[InMemoryRateLimiter]
+		API --> DB[(SQLite Chat + Message tables)]
+		API --> G[LangGraph app_graph]
 
-		RV <--> CDB[(ChromaDB)]
-		RV <--> EMB[(Embeddings)]
-		Q <--> SQL[(SQLite)]
-		Q <--> UPL[Async Upload Jobs]
-		GN <--> LLM[Groq LLM]
+		G --> RO[Router]
+		RO -->|vectorstore| RE[Retriever]
+		RO -->|direct_chat| GE[Generator]
+
+		RE --> RA[Ranker]
+		RA --> GE
+		GE --> CR[Critic]
+
+		CR -->|is_valid = yes| OUT[Final answer + trace]
+		CR -->|is_valid = no and loop_count < 2| GE
+		CR -->|loop_count >= 2| OUT
+
+		subgraph Data and Tooling
+			PDF[PyMuPDF parser]
+			JOB[UploadJobStore]
+			VM[VectorStoreManager]
+			CH[(Chroma per chat_id)]
+			EMB[HuggingFaceEmbeddings]
+			TB[Token budget helpers]
+			GROQ[Groq models: fast and smart]
+		end
+
+		API --> JOB
+		JOB --> PDF
+		PDF --> VM
+		VM --> CH
+		VM --> EMB
+		GE --> TB
+		GE --> GROQ
+		RO --> GROQ
+		RA --> GROQ
+		CR --> GROQ
 ```
 
-## Docker Strategy
+## Phase 1: Dockerization and Registry (ACR)
 
-### Backend Image Strategy
+### Backend Docker Strategy
 
-The backend image is dependency-heavy (ML stack), so layer ordering is critical:
-- Base OS + build tooling first.
-- requirements installation before source code copy to maximize cache reuse.
-- application files copied last to avoid re-installing Python dependencies on small code changes.
+Current backend image structure:
+- Base image: python:3.11-slim
+- Build packages installed: build-essential, gcc, g++
+- requirements.txt installed before source copy for better cache behavior
+- Runtime starts uvicorn app.main:app on port 8000
 
-This pattern materially reduces CI rebuild time when only Python source changes.
+Important directories created in image:
+- /app/db_data
+- /app/chroma_data
+- /app/data/chroma
 
-### Frontend Multi-Stage Build
+This is a single-stage backend image optimized through layer ordering, not a multi-stage backend build.
 
-Frontend follows a strict multi-stage model:
-- Stage 1 (Node): install dependencies and compile static assets.
-- Stage 2 (Nginx): serve only compiled dist output.
+### Frontend Docker Strategy (Multi-Stage)
 
-Benefits:
-- smaller runtime attack surface
-- better startup performance
-- cleaner separation of build vs runtime concerns
+Frontend uses a real multi-stage build:
+1. node:20-alpine build stage
+2. npm install + vite build
+3. nginx:stable-alpine runtime stage serving dist assets
 
-## CI/CD and Secrets
+This keeps the runtime image minimal and avoids shipping Node build tooling in production.
 
-### Current Pipeline Logic
+### Compose Runtime Topology
 
-GitHub Actions currently validates:
-- backend tests (pytest)
-- backend image build
-- frontend image build
+docker-compose.yml defines:
+- backend service mapped to 8000
+- frontend service mapped to 80
+- persistent volumes for sqlite and chroma directories
+- backend environment override CHROMA_PERSIST_DIR=/app/data/chroma
 
-This is the minimum gate before registry promotion.
+## Phase 2: CI/CD Automation
 
-### GitHub Secrets: Secure Handling of AZURE_CREDENTIALS
+The workflow in .github/workflows/ci.yml has two jobs:
 
-Recommended baseline:
+1. test-and-build
+- checkout
+- setup Python 3.11
+- install backend dependencies
+- run pytest
 
-| Secret | Purpose |
-|---|---|
-| AZURE_CREDENTIALS | JSON service principal credentials for federated Azure login in workflow |
-| ACR_LOGIN_SERVER | Registry endpoint for image tags |
-| ACR_USERNAME / ACR_PASSWORD | Registry authentication when required by workflow steps |
-| GROQ_API_KEY | Runtime inference credential injection |
+2. deploy-to-azure (needs test-and-build)
+- azure/login with AZURE_CREDENTIALS
+- azure/docker-login with ACR secrets
+- build and push backend image to ACR with github.sha tag
+- build and push frontend image to ACR with github.sha tag
+- deploy backend via az containerapp up
+- deploy frontend via az containerapp up
 
-Security guidelines:
-- never print credentials in logs
-- scope service principal to least privilege (RG/ACA/ACR only)
-- rotate credentials on schedule
-- use environment-level protections for production deploy jobs
+### GitHub Secrets Handling
 
-## Phase-3 Azure Infrastructure
+Secrets currently required by the workflow:
+- AZURE_CREDENTIALS
+- ACR_LOGIN_SERVER
+- ACR_USERNAME
+- ACR_PASSWORD
+- GROQ_API_KEY
 
-The production topology uses:
-- Resource Group as operational boundary
-- ACR for immutable image storage
-- ACA environment for managed container hosting and revisions
+Security recommendations:
+- keep service principal scoped to the deployment resource group
+- rotate credentials regularly
+- do not echo secrets in logs
+- keep deploy job restricted to protected branches
 
-### Screenshot Reference
+## Phase 3: Azure Infrastructure
 
-![Global Resource Group view](screenshots/azure-resource-list-overview.png)
+Documented deployed resources and naming:
+- Resource Group: rg-multi-ag-ai-rag-es
+- Container Apps Environment: cae-multi-ag-env
+- Backend App: ca-multi-ag-backend
+- Frontend App: ca-multi-ag-frontend
+- Region: Spain Central
 
-## Phase-4 Networking & Nginx Reverse Proxy
+Operational model:
+- frontend app exposes user-facing HTTP ingress
+- backend app exposes API ingress used by frontend reverse proxy
+- images are pulled from ACR in each deployment revision
 
-Nginx is responsible for:
-- SPA fallback routing
-- forwarding /api traffic to backend service
-- preserving forward headers for observability and app context
+## Phase 4: Networking and Nginx
 
-### Critical Nginx Fixes for Azure
+Nginx config in frontend/nginx.conf implements:
+- listen 80
+- root /usr/share/nginx/html
+- SPA fallback with try_files $uri $uri/ /index.html
+- /api proxy to backend HTTPS endpoint in Azure Container Apps
 
-When Nginx proxies to HTTPS upstreams (for example, Azure endpoints ending in .azurecontainerapps.io), the directive below is mandatory in many deployments:
+### Critical SSL/HTTPS Fix
+
+Required directive in this project:
 
 ```nginx
 proxy_ssl_server_name on;
 ```
 
-Why this is critical:
-- enables SNI (Server Name Indication) during TLS handshake
-- ensures certificate name matching on multi-tenant Azure frontends
-- prevents intermittent TLS handshake failures and 502/525-style proxy errors under custom domains or managed cert paths
+Why this is mandatory here:
+- upstream is HTTPS on a hostname-based Azure endpoint
+- Azure frontends require correct SNI to return the matching certificate
+- without SNI, certificate hostname mismatch can break proxy TLS handshake
 
-In short: without SNI, Azure may return a certificate for the wrong host, causing upstream SSL negotiation failures.
+Effective proxy block pattern used:
 
-### Screenshot Reference
+```nginx
+location /api/ {
+		proxy_pass https://ca-multi-ag-backend.prouddune-d60d19a6.spaincentral.azurecontainerapps.io;
+		proxy_ssl_server_name on;
+		proxy_http_version 1.1;
+		proxy_set_header X-Real-IP $remote_addr;
+		proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+		proxy_set_header X-Forwarded-Proto $scheme;
+}
+```
 
-![Frontend Dashboard (Start/Stop)](screenshots/azure-containerapp-frontend-dashboard.png)
+## Phase 5: Cost Control and Hibernation
 
-## Scaling Operations
+The cost model relies on scale-to-zero for student budgets.
 
-Container Apps revisions allow cost-aware lifecycle control.
-
-### Hibernation (Force Scale to 0)
+### Exact Scale-to-Zero Commands
 
 ```bash
 az containerapp update \
-	--name <frontend-app-name> \
-	--resource-group <resource-group> \
+	--name ca-multi-ag-frontend \
+	--resource-group rg-multi-ag-ai-rag-es \
 	--min-replicas 0 \
 	--max-replicas 1
 
 az containerapp update \
-	--name <backend-app-name> \
-	--resource-group <resource-group> \
+	--name ca-multi-ag-backend \
+	--resource-group rg-multi-ag-ai-rag-es \
 	--min-replicas 0 \
 	--max-replicas 1
 ```
 
-Optional hard stop via traffic or revision settings can be applied, but min-replicas=0 is typically sufficient for student-budget hibernation.
+### Verify Replica Policy
 
-### Resume Operations
+```bash
+az containerapp show \
+	--name ca-multi-ag-frontend \
+	--resource-group rg-multi-ag-ai-rag-es \
+	--query "properties.template.scale"
+
+az containerapp show \
+	--name ca-multi-ag-backend \
+	--resource-group rg-multi-ag-ai-rag-es \
+	--query "properties.template.scale"
+```
+
+### Resume from Hibernation
 
 ```bash
 az containerapp update \
-	--name <backend-app-name> \
-	--resource-group <resource-group> \
+	--name ca-multi-ag-backend \
+	--resource-group rg-multi-ag-ai-rag-es \
+	--min-replicas 1 \
+	--max-replicas 2
+
+az containerapp update \
+	--name ca-multi-ag-frontend \
+	--resource-group rg-multi-ag-ai-rag-es \
 	--min-replicas 1 \
 	--max-replicas 2
 ```
 
-Validate status:
+## Appendix: Runtime Behaviors Worth Noting
 
-```bash
-az containerapp show \
-	--name <backend-app-name> \
-	--resource-group <resource-group> \
-	--query "properties.template.scale"
-```
-
-### Screenshot References
-
-![Revisions & Scaling mode](screenshots/azure-containerapp-revisions.png)
-
-![Zero-replica status confirmation](screenshots/azure-containerapp-details.png)
-
-## Phase-5 Cost Control & Hibernation
-
-Cost policy for Azure Students:
-- set min replicas to 0 outside active sessions
-- keep max replicas bounded
-- run load only during demonstration windows
-- monitor requests and memory via Azure metrics before increasing limits
-
-## Operational Checklist
-
-1. Validate CI test/build gates.
-2. Build and push immutable tags to ACR.
-3. Deploy new revision to ACA.
-4. Confirm health endpoints.
-5. If idle, hibernate with min replicas = 0.
+- API supports both blocking and streaming query modes.
+- Agent traces are first-class output and include model actions.
+- Rate limiting is in-memory and process-local.
+- Persistence is currently SQLite and local Chroma directories.
+- For larger production workloads, managed external persistence should be planned.

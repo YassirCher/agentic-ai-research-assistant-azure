@@ -1,163 +1,249 @@
 # Agentic AI Research Assistant on Azure
 
-Production-grade, multi-agent RAG platform for document-grounded question answering with traceable reasoning, citation-aware responses, and cloud-native container operations.
+Production-grade, multi-agent RAG platform for PDF-grounded research Q and A with explainable traces, streaming responses, and Azure-native container deployment.
 
-## Frameworks & Tech Stack
+## Tech Stack & Skills
 
-| Layer | Frameworks / Technologies |
-|---|---|
-| LLM + Agentic Orchestration | LangGraph, LangChain, LangChain Community, LangChain HuggingFace, LangChain Groq, Groq LLM API |
-| Retrieval + Embeddings | ChromaDB, sentence-transformers (all-MiniLM-L6-v2), PyTorch, Transformers |
-| Backend API | FastAPI, Uvicorn, Pydantic, Pydantic Settings, SQLModel, Python Multipart, Tenacity |
-| Document Processing | PyMuPDF |
-| Data Layer | SQLite, Chroma persistent collections |
-| Frontend | React.js, React Router, Vite, Lucide React |
-| Edge / Reverse Proxy | Nginx |
-| Containers | Docker, Docker Compose, Docker Buildx |
-| CI/CD | GitHub Actions, pytest, HTTPX |
-| Azure Deployment | Azure Container Registry (ACR), Azure Container Apps (ACA), Azure Resource Group, Azure CLI, Azure IAM credentials (AZURE_CREDENTIALS) |
+### Languages and Runtime
+- Python 3.11
+- JavaScript (ES Modules)
+- SQL (SQLite)
+- YAML
 
-## Multi-Agent Architecture (RAG Flow)
+### AI, LLM, and RAG Frameworks
+- LangGraph
+- LangChain
+- langchain-community
+- langchain-groq
+- langchain-huggingface
+- Groq API via ChatGroq
+- sentence-transformers (all-MiniLM-L6-v2)
+- Transformers
+- PyTorch
+- ChromaDB
+
+### Backend and API
+- FastAPI
+- Uvicorn
+- Pydantic + pydantic-settings
+- SQLModel
+- python-multipart
+- Tenacity
+
+### Frontend
+- React 18
+- React Router
+- Vite
+- Lucide React
+
+### Infrastructure, DevOps, and Cloud
+- Docker
+- Docker Compose
+- Nginx (SPA + reverse proxy)
+- GitHub Actions
+- pytest + HTTPX
+- Azure Container Registry (ACR)
+- Azure Container Apps (ACA)
+- Azure CLI
+- Azure login and docker login GitHub actions
+
+---
+
+## Multi-Agent Architecture (Code-Accurate)
 
 ```mermaid
 flowchart TD
-		U[User Query] --> API[FastAPI Query Endpoint]
-		API --> G[LangGraph StateGraph]
+		U[User] --> Q[/POST /api/query or /api/query/stream/]
+		Q --> G[LangGraph app_graph]
 
-		G --> R1[Router Agent]
-		R1 -->|needs_rag = true| RET[Retriever Agent]
-		R1 -->|needs_rag = false| GEN[Generator Agent]
+		G --> R[Router Agent]
+		R -->|datasource = vectorstore| RET[Retriever Agent]
+		R -->|datasource = direct_chat| GEN[Generator Agent]
 
 		RET --> RANK[Ranker Agent]
 		RANK --> GEN
+		GEN --> CRI[Critic Agent]
 
-		GEN --> CRIT[Critic Agent]
-		CRIT -->|valid = true| OUT[Answer + Citations + Trace]
-		CRIT -->|valid = false and loop_count < 2| GEN
-		CRIT -->|loop_count >= 2| OUT
+		CRI -->|is_valid = yes| DONE[Final answer + trace]
+		CRI -->|is_valid = no and loop_count < 2| GEN
+		CRI -->|loop_count >= 2| DONE
 
-		subgraph Shared Tooling
-			VS[(ChromaDB Vector Store)]
-			EMB[Sentence-Transformers Embeddings]
-			SQL[(SQLModel + SQLite Chat History)]
-			PDF[Async PDF Parsing + Chunking]
-			BUD[Token Budget + Rate Limits]
+		subgraph Shared System Tools
+			VM[VectorStoreManager]
+			CH[(Chroma collections by chat_id)]
+			EMB[HuggingFaceEmbeddings]
+			DB[(SQLite via SQLModel)]
+			UP[Background upload job store]
+			TB[Token budget and fallback logic]
+			RL[In-memory rate limiter]
 		end
 
-		RET <--> VS
-		RET <--> EMB
-		API <--> SQL
-		API <--> PDF
-		G <--> BUD
+		RET --> VM
+		VM --> CH
+		VM --> EMB
+		Q --> DB
+		Q --> UP
+		GEN --> TB
+		Q --> RL
 ```
 
----
-
-## Phase 1: Dockerization & Registry (ACR)
-
-### 🎯 Objective
-Ship a heavy backend image (embedding stack + ML dependencies) reliably and promote immutable artifacts to Azure Container Registry.
-
-### Key Decisions
-- Backend image built around Python 3.11 slim with optimized dependency layering.
-- Frontend image uses multi-stage build (Node build stage -> Nginx runtime stage).
-- Registry-first strategy ensures deployment consistency and rollback safety.
-
-### Deliverables
-- Containerized backend and frontend services.
-- Image tagging strategy ready for CI/CD promotion.
-- ACR-compatible push model for Azure runtime updates.
+[🔍 View Technical Details in Documentation](documentation.md#multi-agent-architecture)
 
 ---
 
-## Phase 2: CI/CD Automation (GitHub Actions)
+## 🧱 Phase 1: Dockerization and Registry (ACR)
 
-### ⚙️ Objective
-Enforce quality gates and build integrity on every push to main before cloud rollout.
+The project is packaged as two containers:
+- Backend container on Python 3.11 slim with ML and RAG dependencies.
+- Frontend container with a multi-stage build (Node build stage + Nginx runtime stage).
 
-### Workflow Logic
-1. Checkout source.
-2. Set up Python 3.11.
-3. Install backend dependencies.
-4. Run backend test suite (pytest).
-5. Build backend container image.
-6. Build frontend container image.
+Heavy-image strategy:
+- Keep requirements installation before app source copy to improve Docker cache reuse.
+- Push immutable image tags in CI for safe roll-forward and rollback.
 
-### Outcome
-- Deterministic validation pipeline.
-- Early regression detection for code and container definitions.
-- Secure path to Azure deployment extension.
+### Docker Compose Runtime Snapshot
+![Docker containers](<screenshots/docker containers.png>)
+
+[🔍 View Technical Details in Documentation](documentation.md#phase-1-dockerization-and-registry-acr)
 
 ---
 
-## Phase 3: Azure Infrastructure
+## 🔁 Phase 2: CI/CD Automation (GitHub Actions)
 
-### ☁️ Objective
-Provision and operate a clean Azure landing zone for containerized multi-agent inference workloads.
+Pipeline behavior from the workflow:
+1. Run backend tests with environment variables suitable for CI.
+2. Authenticate to Azure.
+3. Authenticate to ACR.
+4. Build and push backend and frontend images tagged with commit SHA.
+5. Deploy both services to Azure Container Apps.
 
-### Provisioned Scope
-- Dedicated Resource Group.
-- Azure Container Registry for image storage.
-- Azure Container Apps environment for managed runtime execution.
+### CI/CD Pipeline Evidence
+![CI/CD GitHub Actions](<screenshots/cicd github.png>)
 
-### Image: Global Resource Group View
-![Global Resource Group view](screenshots/azure-resource-list-overview.png)
+[🔍 View Technical Details in Documentation](documentation.md#phase-2-cicd-automation)
+
+---
+
+## ☁️ Phase 3: Azure Infrastructure
+
+Provisioned cloud boundary:
+- Resource group scoped in Spain Central.
+- Shared Container Apps environment.
+- Separate backend and frontend Container Apps.
+- ACR-backed image source.
+
+### Global Resource Group View
+![Azure resource list overview](screenshots/azure-resource-list-overview.png)
+
+[🔍 View Technical Details in Documentation](documentation.md#phase-3-azure-infrastructure)
+
+### Backend Container App Overview
+![Backend overview](screenshots/azure-containerapp-overview-backend.png)
+
+[🔍 View Technical Details in Documentation](documentation.md#phase-3-azure-infrastructure)
+
+### Frontend Container App Overview
+![Frontend overview](screenshots/azure-containerapp-overview-frontend.png)
+
+[🔍 View Technical Details in Documentation](documentation.md#phase-3-azure-infrastructure)
+
+### Frontend Dashboard (Start/Stop)
+![Frontend dashboard start stop](screenshots/azure-containerapp-frontend-dashboard.png)
+
+[🔍 View Technical Details in Documentation](documentation.md#phase-3-azure-infrastructure)
+
+### Public Azure Deployment Validation
+![Deployed Azure app](<screenshots/deployed azure app.png>)
 
 [🔍 View Technical Details in Documentation](documentation.md#phase-3-azure-infrastructure)
 
 ---
 
-## Phase 4: Networking & Nginx Reverse Proxy
+## 🌐 Phase 4: Networking, Nginx Reverse Proxy, and Application UX Validation
 
-### 🌐 Objective
-Stabilize API routing and HTTPS behavior between frontend ingress and backend services.
+Network behavior implemented:
+- SPA fallback through try_files for React routes.
+- Reverse proxy from frontend /api to backend HTTPS endpoint on Azure Container Apps.
+- TLS SNI fix using proxy_ssl_server_name on; for Azure certificate hostname validation.
 
-### Critical Focus
-- SPA routing fallback in Nginx.
-- Reverse-proxy normalization for /api requests.
-- SSL/TLS alignment for Azure-hosted ingress scenarios.
+### Main Interface (Forest Theme)
+![Main page forest theme](<screenshots/research ai main page (foret emeraude theme).png>)
 
-### Image: Frontend Dashboard (Start/Stop)
-![Frontend Dashboard (Start/Stop)](screenshots/azure-containerapp-frontend-dashboard.png)
+[🔍 View Technical Details in Documentation](documentation.md#phase-4-networking-and-nginx)
 
-[🔍 View Technical Details in Documentation](documentation.md#phase-4-networking--nginx-reverse-proxy)
+### Theme Variant: Sombre Classique
+![Sombre classique](<screenshots/sombre classique.png>)
 
-### Image: Revisions & Scaling Mode
-![Revisions & Scaling mode](screenshots/azure-containerapp-revisions.png)
+[🔍 View Technical Details in Documentation](documentation.md#phase-4-networking-and-nginx)
 
-[🔍 View Technical Details in Documentation](documentation.md#scaling-operations)
+### Theme Variant: Clair Épuré
+![Clair epure theme](<screenshots/clair epure theme.png>)
+
+[🔍 View Technical Details in Documentation](documentation.md#phase-4-networking-and-nginx)
+
+### Theme Variant: Océan Profond
+![Ocean profond theme](<screenshots/ocean profond theme.png>)
+
+[🔍 View Technical Details in Documentation](documentation.md#phase-4-networking-and-nginx)
+
+### Theme Variant: Néon Cyber
+![Neon cyber theme](<screenshots/neon cyber theme.png>)
+
+[🔍 View Technical Details in Documentation](documentation.md#phase-4-networking-and-nginx)
+
+### Multi-PDF Upload Experience
+![Upload multi fichiers](<screenshots/upload multi fichiers.png>)
+
+[🔍 View Technical Details in Documentation](documentation.md#phase-4-networking-and-nginx)
+
+### Grounded Q and A Result with Citations
+![Question on uploaded docs and answer](<screenshots/question sur doc uploade(cv  et reponse).png>)
+
+[🔍 View Technical Details in Documentation](documentation.md#multi-agent-architecture)
+
+### Agent Trace and Reasoning Visibility
+![Thought process et analyse des agents](<screenshots/thought process et analyse des agents.png>)
+
+[🔍 View Technical Details in Documentation](documentation.md#multi-agent-architecture)
+
+### Conversation Deletion Flow
+![Suppression de conversation](<screenshots/supression de conversation.png>)
+
+[🔍 View Technical Details in Documentation](documentation.md#phase-4-networking-and-nginx)
 
 ---
 
-## Phase 5: Cost Control & Hibernation (Scale to 0)
+## 💸 Phase 5: Cost Control and Hibernation (Scale to 0)
 
-### 💸 Objective
-Minimize cloud spend for Azure Students subscriptions using explicit hibernation and on-demand wake-up.
+Student-cost strategy:
+- Keep min replicas at 0 when idle.
+- Use bounded max replicas to avoid accidental burst cost.
+- Resume with explicit scale update before demos.
 
-### Strategy
-- Scale frontend/backend to zero replicas when idle.
-- Resume only for active demos or validations.
-- Keep container revisions and configuration intact across sleeps.
+### Revisions and Scaling Controls
+![Azure containerapp revisions](screenshots/azure-containerapp-revisions.png)
 
-### Image: Zero-Replica Status Confirmation
-![Zero-replica status confirmation](screenshots/azure-containerapp-details.png)
+[🔍 View Technical Details in Documentation](documentation.md#phase-5-cost-control-and-hibernation)
 
-[🔍 View Technical Details in Documentation](documentation.md#phase-5-cost-control--hibernation)
+### Zero-Replica Operational Confirmation
+![Azure containerapp details](screenshots/azure-containerapp-details.png)
+
+[🔍 View Technical Details in Documentation](documentation.md#phase-5-cost-control-and-hibernation)
 
 ---
 
-## Quick Start (Local)
+## Local Run
 
 ```bash
 docker compose up --build -d
 ```
 
-Application endpoints:
+Endpoints:
 - Frontend: http://localhost
-- Backend API: http://localhost:8000
-- OpenAPI docs: http://localhost:8000/docs
+- API: http://localhost:8000
+- OpenAPI: http://localhost:8000/docs
 
-Run tests:
+Backend tests:
 
 ```bash
 cd backend
